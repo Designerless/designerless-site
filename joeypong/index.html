@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Joey Pong</title>
+<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+  font-family: system-ui, sans-serif;
+}
+canvas { display: block; }
+
+.menu, .overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: rgba(0,0,0,0.9);
+  z-index: 10;
+}
+
+h1 {
+  font-size: clamp(48px, 8vw, 96px);
+  margin: 0;
+  color: white;
+}
+
+button {
+  font-size: 22px;
+  padding: 14px 28px;
+  border-radius: 12px;
+  border: none;
+  cursor: pointer;
+  background: white;
+  color: black;
+  min-width: 260px;
+}
+</style>
+</head>
+<body>
+
+<div class="menu" id="menu">
+  <h1>JOEY PONG</h1>
+  <button onclick="startCPU('easy')">1 PLAYER – EASY</button>
+  <button onclick="startCPU('hard')">1 PLAYER – HARD</button>
+  <button onclick="startPVP()">2 PLAYER</button>
+</div>
+
+<div class="overlay" id="gameOver" style="display:none">
+  <h1 id="winnerText"></h1>
+  <button onclick="backToMenu()">BACK TO MENU</button>
+</div>
+
+<canvas id="game"></canvas>
+
+<script>
+/* ================= SETUP ================= */
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const menu = document.getElementById("menu");
+const gameOver = document.getElementById("gameOver");
+const winnerText = document.getElementById("winnerText");
+
+const ballImg = new Image();
+ballImg.src = "JoeyPongBall.png";
+
+const paddleImg = new Image();
+paddleImg.src = "paddle.png";
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
+
+/* ================= AUDIO ================= */
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function beep(baseFreq, dur = 0.05) {
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = "square";
+  o.frequency.value = baseFreq + (Math.random() * 80 - 40);
+  g.gain.value = 0.08;
+  o.connect(g);
+  g.connect(audioCtx.destination);
+  o.start();
+  o.stop(audioCtx.currentTime + dur);
+}
+
+/* ================= INPUT ================= */
+const keys = {};
+window.addEventListener("keydown", e => keys[e.key] = true);
+window.addEventListener("keyup", e => keys[e.key] = false);
+
+/* ================= STATE ================= */
+let playing = false;
+let scoreL = 0;
+let scoreR = 0;
+const WIN_SCORE = 7;
+let mode = "pvp";
+let difficulty = "easy";
+
+/* ================= CPU ================= */
+const CPU = {
+  easy: { speed: 0.55, reactionTime: 0.18, error: 0.28 },
+  hard: { speed: 0.88, reactionTime: 0.07, error: 0.06 }
+};
+
+/* ================= OBJECTS ================= */
+const paddle = {
+  w: 32,
+  h: () => H * 0.18,
+  speed: () => H * 0.9
+};
+
+const p1 = {};
+const p2 = {};
+
+const ball = {
+  x: 0,
+  y: 0,
+  r: () => Math.min(W, H) * 0.07,
+  vx: 0,
+  vy: 0,
+  baseSpeed: () => Math.min(W, H) * 0.75,
+  speed: 0,
+  wallCooldown: 0
+};
+
+/* ================= CPU STATE ================= */
+let cpuTargetY = 0;
+let cpuTimer = 0;
+
+/* ================= GAME FLOW ================= */
+function reset() {
+  p1.x = W * 0.04;
+  p2.x = W * 0.96 - paddle.w;
+  p1.y = p2.y = H / 2 - paddle.h() / 2;
+
+  ball.x = W / 2;
+  ball.y = H / 2;
+  ball.speed = ball.baseSpeed();
+
+  cpuTargetY = H / 2;
+  cpuTimer = 0;
+}
+
+function serve() {
+  const dir = Math.random() < 0.5 ? -1 : 1;
+  const a = (Math.random() * 0.4 - 0.2);
+  ball.vx = Math.cos(a) * ball.speed * dir;
+  ball.vy = Math.sin(a) * ball.speed;
+}
+
+function startCPU(diff) {
+  mode = "cpu";
+  difficulty = diff;
+  startGame();
+}
+function startPVP() {
+  mode = "pvp";
+  startGame();
+}
+function startGame() {
+  menu.style.display = "none";
+  gameOver.style.display = "none";
+  scoreL = scoreR = 0;
+  reset();
+  serve();
+  playing = true;
+}
+function backToMenu() {
+  playing = false;
+  menu.style.display = "flex";
+  gameOver.style.display = "none";
+}
+
+/* ================= UPDATE ================= */
+function update(dt) {
+  ball.wallCooldown -= dt;
+
+  if (keys["w"]) p1.y -= paddle.speed() * dt;
+  if (keys["s"]) p1.y += paddle.speed() * dt;
+
+  if (mode === "pvp") {
+    if (keys["ArrowUp"]) p2.y -= paddle.speed() * dt;
+    if (keys["ArrowDown"]) p2.y += paddle.speed() * dt;
+  } else {
+    const cpu = CPU[difficulty];
+    cpuTimer -= dt;
+    if (cpuTimer <= 0) {
+      cpuTimer = cpu.reactionTime;
+      cpuTargetY = ball.vx > 0
+        ? ball.y - paddle.h() / 2 + (Math.random() - 0.5) * paddle.h() * cpu.error
+        : H / 2 - paddle.h() / 2;
+    }
+    const diff = cpuTargetY - p2.y;
+    const move = Math.sign(diff) * paddle.speed() * cpu.speed * dt;
+    if (Math.abs(diff) > Math.abs(move)) p2.y += move;
+  }
+
+  p1.y = Math.max(0, Math.min(H - paddle.h(), p1.y));
+  p2.y = Math.max(0, Math.min(H - paddle.h(), p2.y));
+
+  ball.x += ball.vx * dt;
+  ball.y += ball.vy * dt;
+
+  // Walls
+  if (ball.y - ball.r() < 0) {
+    ball.y = ball.r();
+    ball.vy = Math.abs(ball.vy);
+  }
+  if (ball.y + ball.r() > H) {
+    ball.y = H - ball.r();
+    ball.vy = -Math.abs(ball.vy);
+  }
+
+  function hit(p, dir) {
+    if (
+      ball.x + ball.r() > p.x &&
+      ball.x - ball.r() < p.x + paddle.w &&
+      ball.y + ball.r() > p.y &&
+      ball.y - ball.r() < p.y + paddle.h()
+    ) {
+      ball.speed *= 1.03;
+      ball.speed += 6;
+
+      const rel = (ball.y - (p.y + paddle.h() / 2)) / (paddle.h() / 2);
+      const angle = Math.max(-Math.PI / 4, Math.min(Math.PI / 4, rel * Math.PI / 4));
+
+      ball.vx = Math.cos(angle) * ball.speed * dir;
+      ball.vy = Math.sin(angle) * ball.speed;
+
+      beep(600 + ball.speed * 0.02);
+    }
+  }
+
+  hit(p1, 1);
+  hit(p2, -1);
+
+  if (ball.x < 0) { scoreR++; checkWin(); reset(); serve(); }
+  if (ball.x > W) { scoreL++; checkWin(); reset(); serve(); }
+}
+
+function checkWin() {
+  if (scoreL >= WIN_SCORE || scoreR >= WIN_SCORE) {
+    playing = false;
+    winnerText.textContent =
+      mode === "cpu"
+        ? (scoreL >= WIN_SCORE ? "PLAYER WINS" : "COMPUTER WINS")
+        : (scoreL >= WIN_SCORE ? "PLAYER 1 WINS" : "PLAYER 2 WINS");
+    gameOver.style.display = "flex";
+    beep(200, 0.3);
+  }
+}
+
+/* ================= DRAW ================= */
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Net
+  ctx.fillStyle = "#fff";
+  for (let y = 0; y < H; y += 40) ctx.fillRect(W / 2 - 2, y, 4, 24);
+
+  // Glow based on speed
+  ctx.shadowColor = "#fff";
+  ctx.shadowBlur = Math.min(ball.speed * 0.05, 40);
+
+  // Ball
+  const r = ball.r();
+  ctx.drawImage(ballImg, ball.x - r, ball.y - r, r * 2, r * 2);
+  ctx.shadowBlur = 0;
+
+  // Paddles
+  ctx.drawImage(paddleImg, p1.x, p1.y, paddle.w, paddle.h());
+  ctx.save();
+  ctx.translate(p2.x + paddle.w, p2.y);
+  ctx.scale(-1, 1);
+  ctx.drawImage(paddleImg, 0, 0, paddle.w, paddle.h());
+  ctx.restore();
+
+  // Score
+  ctx.font = `bold ${Math.min(W, H) * 0.12}px system-ui`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillText(scoreL, W * 0.25, 20);
+  ctx.fillText(scoreR, W * 0.75, 20);
+}
+
+/* ================= LOOP ================= */
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.033, (now - last) / 1000);
+  last = now;
+  if (playing) update(dt), draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
