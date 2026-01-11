@@ -158,7 +158,8 @@ function ensureAudio() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === "suspended") audioCtx.resume();
 }
-function beep(freq, dur = 0.08) {
+
+function playTone(freq, dur = 0.06) {
   if (!audioCtx) return;
   const o = audioCtx.createOscillator();
   const g = audioCtx.createGain();
@@ -170,6 +171,7 @@ function beep(freq, dur = 0.08) {
   o.start();
   o.stop(audioCtx.currentTime + dur);
 }
+
 window.addEventListener("pointerdown", ensureAudio, { once:true });
 
 /* ================= INPUT ================= */
@@ -209,6 +211,7 @@ let difficulty = "easy";
 let serving = false;
 let serveCountdown = 0;
 let serveTimer = 0;
+const SERVE_STEP = 0.6;
 
 /* ================= CPU ================= */
 const CPU = {
@@ -247,11 +250,10 @@ function startServeCountdown() {
   ball.y = H/2;
   ball.speed = Math.min(W, H) * 0.75;
   ball.vx = ball.vy = 0;
-
   serving = true;
   serveCountdown = 3;
   serveTimer = 0;
-  beep(400);
+  playTone(420);
 }
 
 function finishServe() {
@@ -295,16 +297,14 @@ btnMenu.onclick = () => backToMenu();
 function update(dt) {
   if (serving) {
     serveTimer += dt;
-    if (serveTimer >= 1) {
+    if (serveTimer >= SERVE_STEP) {
       serveTimer = 0;
       serveCountdown--;
-      beep(400);
+      playTone(420);
       if (serveCountdown <= 0) finishServe();
     }
     return;
   }
-
-  ball.wallCooldown -= dt;
 
   if (keys["w"]) p1.y -= paddle.speed()*dt;
   if (keys["s"]) p1.y += paddle.speed()*dt;
@@ -333,8 +333,18 @@ function update(dt) {
   ball.y += ball.vy*dt;
 
   const r = ball.r();
-  if (ball.y - r < 0) { ball.y = r; ball.vy = Math.abs(ball.vy); }
-  if (ball.y + r > H) { ball.y = H-r; ball.vy = -Math.abs(ball.vy); }
+
+  if (ball.y - r < 0) {
+    ball.y = r;
+    ball.vy = Math.abs(ball.vy);
+    playTone(260); // wall
+  }
+
+  if (ball.y + r > H) {
+    ball.y = H - r;
+    ball.vy = -Math.abs(ball.vy);
+    playTone(260); // wall
+  }
 
   function hit(p, dir) {
     if (
@@ -348,11 +358,15 @@ function update(dt) {
       const a = Math.max(-Math.PI/4, Math.min(Math.PI/4, rel*Math.PI/4));
       ball.vx = Math.cos(a)*ball.speed*dir;
       ball.vy = Math.sin(a)*ball.speed;
-      beep(700);
+
+      // 🎵 different tones per paddle
+      if (dir === 1) playTone(760); // left paddle
+      else playTone(640);          // right paddle
     }
   }
 
-  hit(p1,1); hit(p2,-1);
+  hit(p1,1);
+  hit(p2,-1);
 
   if (ball.x < 0) { scoreR++; onScore(); }
   if (ball.x > W) { scoreL++; onScore(); }
@@ -400,11 +414,12 @@ function draw() {
   ctx.fillText(scoreR,W*0.75,scoreY);
 
   if (serving) {
-    ctx.font=`bold ${Math.min(W,H)*0.2}px system-ui`;
+    ctx.font=`bold ${Math.min(W,H)*0.18}px system-ui`;
     ctx.textBaseline="middle";
     ctx.fillText(
       serveCountdown>0?serveCountdown:"GO",
-      W/2,H/2
+      W/2,
+      H*0.62
     );
   }
 }
