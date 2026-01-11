@@ -5,7 +5,9 @@
 <title>Joey Pong</title>
 
 <meta name="viewport"
-  content="width=device-width, height=device-height, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  content="width=device-width, height=device-height,
+  initial-scale=1.0, minimum-scale=1.0,
+  maximum-scale=1.0, user-scalable=no">
 
 <style>
 * {
@@ -156,19 +158,19 @@ function ensureAudio() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === "suspended") audioCtx.resume();
 }
-function beep(freq, dur = 0.05) {
+function beep(freq, dur = 0.08) {
   if (!audioCtx) return;
   const o = audioCtx.createOscillator();
   const g = audioCtx.createGain();
   o.type = "square";
-  o.frequency.value = freq + Math.random() * 60;
+  o.frequency.value = freq;
   g.gain.value = 0.08;
   o.connect(g);
   g.connect(audioCtx.destination);
   o.start();
   o.stop(audioCtx.currentTime + dur);
 }
-window.addEventListener("pointerdown", ensureAudio, { once: true });
+window.addEventListener("pointerdown", ensureAudio, { once:true });
 
 /* ================= INPUT ================= */
 const keys = {};
@@ -203,6 +205,11 @@ const WIN_SCORE = 7;
 let mode = "pvp";
 let difficulty = "easy";
 
+/* SERVE COUNTDOWN */
+let serving = false;
+let serveCountdown = 0;
+let serveTimer = 0;
+
 /* ================= CPU ================= */
 const CPU = {
   easy: { speed: 0.70, reaction: 0.14, error: 0.14 },
@@ -222,34 +229,37 @@ const p1 = { x:0, y:0 };
 const p2 = { x:0, y:0 };
 
 const ball = {
-  x: 0, y: 0,
-  vx: 0, vy: 0,
-  speed: 0,
-  wallCooldown: 0,
+  x:0, y:0, vx:0, vy:0,
+  speed:0, wallCooldown:0,
   r: () => Math.min(W, H) * 0.07
 };
 
-/* ================= RESET FUNCTIONS ================= */
+/* ================= RESET ================= */
 function fullReset() {
   p1.x = W * 0.04;
   p2.x = W * 0.96 - paddle.w;
-  p1.y = p2.y = H / 2 - paddle.h() / 2;
-  resetBall();
+  p1.y = p2.y = H/2 - paddle.h()/2;
+  startServeCountdown();
 }
 
-function resetBall() {
-  ball.x = W / 2;
-  ball.y = H / 2;
+function startServeCountdown() {
+  ball.x = W/2;
+  ball.y = H/2;
   ball.speed = Math.min(W, H) * 0.75;
-  ball.wallCooldown = 0;
-  serve();
+  ball.vx = ball.vy = 0;
+
+  serving = true;
+  serveCountdown = 3;
+  serveTimer = 0;
+  beep(400);
 }
 
-function serve() {
+function finishServe() {
   const dir = Math.random() < 0.5 ? -1 : 1;
   const a = Math.random() * 0.4 - 0.2;
   ball.vx = Math.cos(a) * ball.speed * dir;
   ball.vy = Math.sin(a) * ball.speed;
+  serving = false;
 }
 
 /* ================= FLOW ================= */
@@ -266,8 +276,7 @@ function startGame() {
   if (orientationBlocked) return;
   menu.style.display = "none";
   gameOver.style.display = "none";
-  scoreL = 0;
-  scoreR = 0;
+  scoreL = scoreR = 0;
   fullReset();
   playing = true;
 }
@@ -284,47 +293,48 @@ btnMenu.onclick = () => backToMenu();
 
 /* ================= UPDATE ================= */
 function update(dt) {
+  if (serving) {
+    serveTimer += dt;
+    if (serveTimer >= 1) {
+      serveTimer = 0;
+      serveCountdown--;
+      beep(400);
+      if (serveCountdown <= 0) finishServe();
+    }
+    return;
+  }
+
   ball.wallCooldown -= dt;
 
-  if (keys["w"]) p1.y -= paddle.speed() * dt;
-  if (keys["s"]) p1.y += paddle.speed() * dt;
-  if (touchLeftY !== null) p1.y = touchLeftY - paddle.h() / 2;
+  if (keys["w"]) p1.y -= paddle.speed()*dt;
+  if (keys["s"]) p1.y += paddle.speed()*dt;
+  if (touchLeftY !== null) p1.y = touchLeftY - paddle.h()/2;
 
   if (mode === "pvp") {
-    if (keys["ArrowUp"]) p2.y -= paddle.speed() * dt;
-    if (keys["ArrowDown"]) p2.y += paddle.speed() * dt;
-    if (touchRightY !== null) p2.y = touchRightY - paddle.h() / 2;
+    if (keys["ArrowUp"]) p2.y -= paddle.speed()*dt;
+    if (keys["ArrowDown"]) p2.y += paddle.speed()*dt;
+    if (touchRightY !== null) p2.y = touchRightY - paddle.h()/2;
   } else if (touchRightY === null) {
     const cpu = CPU[difficulty];
     cpuTimer -= dt;
     if (cpuTimer <= 0) {
       cpuTimer = cpu.reaction;
       cpuTargetY = ball.vx > 0
-        ? ball.y - paddle.h()/2 + (Math.random()-0.5) * paddle.h() * cpu.error
+        ? ball.y - paddle.h()/2 + (Math.random()-0.5)*paddle.h()*cpu.error
         : H/2 - paddle.h()/2;
     }
-    p2.y += Math.sign(cpuTargetY - p2.y) * paddle.speed() * cpu.speed * dt;
+    p2.y += Math.sign(cpuTargetY - p2.y) * paddle.speed()*cpu.speed*dt;
   }
 
   p1.y = Math.max(0, Math.min(H - paddle.h(), p1.y));
   p2.y = Math.max(0, Math.min(H - paddle.h(), p2.y));
 
-  ball.x += ball.vx * dt;
-  ball.y += ball.vy * dt;
+  ball.x += ball.vx*dt;
+  ball.y += ball.vy*dt;
 
   const r = ball.r();
-
-  if (ball.y - r < 0) {
-    ball.y = r;
-    ball.vy = Math.abs(ball.vy);
-    if (ball.wallCooldown <= 0) { beep(300); ball.wallCooldown = 0.08; }
-  }
-
-  if (ball.y + r > H) {
-    ball.y = H - r;
-    ball.vy = -Math.abs(ball.vy);
-    if (ball.wallCooldown <= 0) { beep(300); ball.wallCooldown = 0.08; }
-  }
+  if (ball.y - r < 0) { ball.y = r; ball.vy = Math.abs(ball.vy); }
+  if (ball.y + r > H) { ball.y = H-r; ball.vy = -Math.abs(ball.vy); }
 
   function hit(p, dir) {
     if (
@@ -333,17 +343,16 @@ function update(dt) {
       ball.y + r > p.y &&
       ball.y - r < p.y + paddle.h()
     ) {
-      ball.speed = ball.speed * 1.03 + 6;
+      ball.speed = ball.speed*1.03 + 6;
       const rel = (ball.y - (p.y + paddle.h()/2)) / (paddle.h()/2);
-      const a = Math.max(-Math.PI/4, Math.min(Math.PI/4, rel * Math.PI/4));
-      ball.vx = Math.cos(a) * ball.speed * dir;
-      ball.vy = Math.sin(a) * ball.speed;
-      beep(600 + ball.speed * 0.01);
+      const a = Math.max(-Math.PI/4, Math.min(Math.PI/4, rel*Math.PI/4));
+      ball.vx = Math.cos(a)*ball.speed*dir;
+      ball.vy = Math.sin(a)*ball.speed;
+      beep(700);
     }
   }
 
-  hit(p1, 1);
-  hit(p2, -1);
+  hit(p1,1); hit(p2,-1);
 
   if (ball.x < 0) { scoreR++; onScore(); }
   if (ball.x > W) { scoreL++; onScore(); }
@@ -358,45 +367,54 @@ function onScore() {
         : (scoreL ? "PLAYER 1 WINS" : "PLAYER 2 WINS");
     gameOver.style.display = "flex";
   } else {
-    resetBall(); // ✅ paddles stay exactly where they are
+    startServeCountdown();
   }
 }
 
 /* ================= DRAW ================= */
 function draw() {
-  ctx.clearRect(0, 0, W, H);
+  ctx.clearRect(0,0,W,H);
 
-  ctx.fillStyle = "#fff";
-  for (let y = 0; y < H; y += 40) ctx.fillRect(W/2 - 2, y, 4, 24);
+  ctx.fillStyle="#fff";
+  for(let y=0;y<H;y+=40) ctx.fillRect(W/2-2,y,4,24);
 
-  ctx.shadowColor = "#fff";
-  ctx.shadowBlur = Math.min(ball.speed * 0.05, 40);
-  const r = ball.r();
-  ctx.drawImage(ballImg, ball.x - r, ball.y - r, r*2, r*2);
-  ctx.shadowBlur = 0;
+  ctx.shadowColor="#fff";
+  ctx.shadowBlur=Math.min(ball.speed*0.05,40);
+  const r=ball.r();
+  ctx.drawImage(ballImg,ball.x-r,ball.y-r,r*2,r*2);
+  ctx.shadowBlur=0;
 
-  ctx.drawImage(paddleImg, p1.x, p1.y, paddle.w, paddle.h());
+  ctx.drawImage(paddleImg,p1.x,p1.y,paddle.w,paddle.h());
   ctx.save();
-  ctx.translate(p2.x + paddle.w, p2.y);
-  ctx.scale(-1, 1);
-  ctx.drawImage(paddleImg, 0, 0, paddle.w, paddle.h());
+  ctx.translate(p2.x+paddle.w,p2.y);
+  ctx.scale(-1,1);
+  ctx.drawImage(paddleImg,0,0,paddle.w,paddle.h());
   ctx.restore();
 
-  ctx.font = `bold ${Math.min(W, H) * 0.12}px system-ui`;
-  ctx.fillStyle = "#fff";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "top";
-  const scoreY = Math.max(20, H * 0.04);
-  ctx.fillText(scoreL, W * 0.25, scoreY);
-  ctx.fillText(scoreR, W * 0.75, scoreY);
+  ctx.font=`bold ${Math.min(W,H)*0.12}px system-ui`;
+  ctx.fillStyle="#fff";
+  ctx.textAlign="center";
+  ctx.textBaseline="top";
+  const scoreY=Math.max(20,H*0.04);
+  ctx.fillText(scoreL,W*0.25,scoreY);
+  ctx.fillText(scoreR,W*0.75,scoreY);
+
+  if (serving) {
+    ctx.font=`bold ${Math.min(W,H)*0.2}px system-ui`;
+    ctx.textBaseline="middle";
+    ctx.fillText(
+      serveCountdown>0?serveCountdown:"GO",
+      W/2,H/2
+    );
+  }
 }
 
 /* ================= LOOP ================= */
-let last = performance.now();
-function loop(t) {
-  const dt = Math.min(0.033, (t - last) / 1000);
-  last = t;
-  if (playing && !orientationBlocked) {
+let last=performance.now();
+function loop(t){
+  const dt=Math.min(0.033,(t-last)/1000);
+  last=t;
+  if(playing && !orientationBlocked){
     update(dt);
     draw();
   }
