@@ -4,19 +4,30 @@
 <meta charset="UTF-8">
 <title>Joey Pong</title>
 
+<!-- Strong mobile viewport lock -->
 <meta name="viewport"
-content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no">
+  content="width=device-width, height=device-height, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
 <style>
+/* Prevent selection/zoom highlights and mobile weirdness */
+* {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
 html, body {
   margin: 0;
   padding: 0;
   height: 100%;
   background: #000;
   overflow: hidden;
-  font-family: system-ui, sans-serif;
+
+  /* Prevent scroll chaining + gestures */
   overscroll-behavior: none;
   touch-action: none;
+  font-family: system-ui, sans-serif;
 }
 
 canvas { display: block; }
@@ -29,7 +40,7 @@ canvas { display: block; }
   justify-content: center;
   align-items: center;
   gap: 18px;
-  background: rgba(0,0,0,0.9);
+  background: rgba(0,0,0,0.92);
   z-index: 10;
 }
 
@@ -37,20 +48,24 @@ canvas { display: block; }
   display: none;
   position: fixed;
   inset: 0;
-  background: black;
-  color: white;
+  background: #000;
+  color: #fff;
   z-index: 20;
   align-items: center;
   justify-content: center;
   font-size: 28px;
   text-align: center;
-  pointer-events: none; /* IMPORTANT */
+
+  /* IMPORTANT: don't block menu clicks/taps */
+  pointer-events: none;
 }
 
 h1 {
-  color: white;
-  font-size: clamp(48px, 8vw, 96px);
+  color: #fff;
+  font-size: clamp(44px, 8vw, 96px);
   margin: 0;
+  padding: 0 16px;
+  text-align: center;
 }
 
 button {
@@ -59,9 +74,12 @@ button {
   border-radius: 12px;
   border: none;
   cursor: pointer;
-  background: white;
-  color: black;
+  background: #fff;
+  color: #000;
   min-width: 260px;
+
+  /* Let buttons still be tappable even though body is touch-action:none */
+  touch-action: manipulation;
 }
 </style>
 </head>
@@ -71,49 +89,31 @@ button {
 
 <div class="menu" id="menu">
   <h1>JOEY PONG</h1>
-  <button onclick="startCPU('easy')">1 PLAYER – EASY</button>
-  <button onclick="startCPU('hard')">1 PLAYER – HARD</button>
-  <button onclick="startPVP()">2 PLAYER</button>
+  <button id="btnEasy">1 PLAYER – EASY</button>
+  <button id="btnHard">1 PLAYER – HARD</button>
+  <button id="btnPVP">2 PLAYER</button>
 </div>
 
 <div class="overlay" id="gameOver" style="display:none">
   <h1 id="winnerText"></h1>
-  <button onclick="backToMenu()">BACK TO MENU</button>
+  <button id="btnMenu">BACK TO MENU</button>
 </div>
 
 <canvas id="game"></canvas>
 
 <script>
-/* ================= SETUP ================= */
-const canvas = document.getElementById("game");
-const ctx = canvas.getContext("2d");
-
-const menu = document.getElementById("menu");
-const gameOver = document.getElementById("gameOver");
-const winnerText = document.getElementById("winnerText");
-const rotateNotice = document.getElementById("rotateNotice");
-
-const ballImg = new Image();
-ballImg.src = "JoeyPongBall.png";
-
-const paddleImg = new Image();
-paddleImg.src = "paddle.png";
-
-let W, H;
-function resize() {
-  W = canvas.width = window.innerWidth;
-  H = canvas.height = window.innerHeight;
-  checkOrientation();
-}
-window.addEventListener("resize", resize);
-window.addEventListener("orientationchange", resize);
-resize();
-
-/* ================= ORIENTATION ================= */
+/* =========================================================
+   CRITICAL: define orientation + state BEFORE any resize call
+========================================================= */
 let orientationBlocked = false;
+let playing = false;
+
+function isMobileUA() {
+  return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
 
 function checkOrientation() {
-  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+  const isMobile = isMobileUA();
   const isPortrait = window.innerHeight > window.innerWidth;
 
   if (isMobile && isPortrait) {
@@ -124,13 +124,55 @@ function checkOrientation() {
     orientationBlocked = false;
   }
 
-  /* force menu reflow (fixes text shifting) */
+  // Force menu reflow (fixes “text drifts offscreen” after rotation on iOS)
   menu.style.display = menu.style.display;
 }
 
-/* ================= AUDIO ================= */
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+/* =========================================================
+   Prevent iOS pinch-zoom gestures from ever happening
+========================================================= */
+document.addEventListener("gesturestart", e => e.preventDefault());
+document.addEventListener("gesturechange", e => e.preventDefault());
+document.addEventListener("gestureend", e => e.preventDefault());
+
+/* ================= SETUP ================= */
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const menu = document.getElementById("menu");
+const gameOver = document.getElementById("gameOver");
+const winnerText = document.getElementById("winnerText");
+const rotateNotice = document.getElementById("rotateNotice");
+
+const btnEasy = document.getElementById("btnEasy");
+const btnHard = document.getElementById("btnHard");
+const btnPVP  = document.getElementById("btnPVP");
+const btnMenu = document.getElementById("btnMenu");
+
+const ballImg = new Image();
+ballImg.src = "JoeyPongBall.png";
+
+const paddleImg = new Image();
+paddleImg.src = "paddle.png";
+
+let W = 0, H = 0;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  checkOrientation();
+}
+window.addEventListener("resize", resize);
+window.addEventListener("orientationchange", resize);
+resize();
+
+/* ================= AUDIO (unlock on first tap) ================= */
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+}
 function beep(freq, dur = 0.05) {
+  if (!audioCtx) return;
   const o = audioCtx.createOscillator();
   const g = audioCtx.createGain();
   o.type = "square";
@@ -141,6 +183,8 @@ function beep(freq, dur = 0.05) {
   o.start();
   o.stop(audioCtx.currentTime + dur);
 }
+window.addEventListener("pointerdown", ensureAudio, { once: true });
+window.addEventListener("touchstart", ensureAudio, { once: true, passive: true });
 
 /* ================= INPUT ================= */
 const keys = {};
@@ -152,12 +196,11 @@ let touchRightY = null;
 
 canvas.addEventListener("touchstart", handleTouch, { passive:false });
 canvas.addEventListener("touchmove", handleTouch, { passive:false });
-canvas.addEventListener("touchend", () => {
-  touchLeftY = null;
-  touchRightY = null;
-});
+canvas.addEventListener("touchend", () => { touchLeftY = null; touchRightY = null; });
 
 function handleTouch(e) {
+  // Only prevent default on touches that are actually on the canvas
+  // (menu taps won't be affected because menu is above canvas)
   e.preventDefault();
   const r = canvas.getBoundingClientRect();
   for (const t of e.touches) {
@@ -168,19 +211,20 @@ function handleTouch(e) {
   }
 }
 
-/* ================= STATE ================= */
-let playing = false;
+/* ================= GAME STATE ================= */
 let scoreL = 0;
 let scoreR = 0;
 const WIN_SCORE = 7;
-let mode = "pvp";
+let mode = "pvp";      // "pvp" or "cpu"
 let difficulty = "easy";
 
 /* ================= CPU ================= */
 const CPU = {
-  easy: { speed: 0.65 },
-  hard: { speed: 0.9 }
+  easy: { speed: 0.70, reaction: 0.14, error: 0.14 },
+  hard: { speed: 0.92, reaction: 0.07, error: 0.06 }
 };
+let cpuTargetY = 0;
+let cpuTimer = 0;
 
 /* ================= OBJECTS ================= */
 const paddle = {
@@ -188,12 +232,12 @@ const paddle = {
   h: () => H * 0.2,
   speed: () => H * 0.9
 };
-
-const p1 = {};
-const p2 = {};
+const p1 = { x:0, y:0 };
+const p2 = { x:0, y:0 };
 
 const ball = {
-  x: 0, y: 0, vx: 0, vy: 0,
+  x: 0, y: 0,
+  vx: 0, vy: 0,
   speed: 0,
   wallCooldown: 0,
   r: () => Math.min(W, H) * 0.07
@@ -204,10 +248,14 @@ function reset() {
   p1.x = W * 0.04;
   p2.x = W * 0.96 - paddle.w;
   p1.y = p2.y = H / 2 - paddle.h() / 2;
+
   ball.x = W / 2;
   ball.y = H / 2;
   ball.speed = Math.min(W, H) * 0.75;
   ball.wallCooldown = 0;
+
+  cpuTargetY = H / 2;
+  cpuTimer = 0;
 }
 
 function serve() {
@@ -222,17 +270,19 @@ function startCPU(diff) {
   difficulty = diff;
   startGame();
 }
-
 function startPVP() {
   mode = "pvp";
   startGame();
 }
 
 function startGame() {
+  // MOBILE MUST BE LANDSCAPE TO START
   if (orientationBlocked) return;
+
   menu.style.display = "none";
   gameOver.style.display = "none";
-  scoreL = scoreR = 0;
+
+  scoreL = 0; scoreR = 0;
   reset();
   serve();
   playing = true;
@@ -241,79 +291,97 @@ function startGame() {
 function backToMenu() {
   playing = false;
   menu.style.display = "flex";
+  gameOver.style.display = "none";
 }
+
+/* Hook up buttons with JS listeners (more reliable on mobile than inline onclick) */
+btnEasy.addEventListener("click", () => startCPU("easy"));
+btnHard.addEventListener("click", () => startCPU("hard"));
+btnPVP.addEventListener("click",  () => startPVP());
+btnMenu.addEventListener("click", () => backToMenu());
 
 /* ================= UPDATE ================= */
 function update(dt) {
   ball.wallCooldown -= dt;
 
+  // Player 1
   if (keys["w"]) p1.y -= paddle.speed() * dt;
   if (keys["s"]) p1.y += paddle.speed() * dt;
   if (touchLeftY !== null) p1.y = touchLeftY - paddle.h() / 2;
 
+  // Player 2 / CPU
   if (mode === "pvp") {
     if (keys["ArrowUp"]) p2.y -= paddle.speed() * dt;
     if (keys["ArrowDown"]) p2.y += paddle.speed() * dt;
     if (touchRightY !== null) p2.y = touchRightY - paddle.h() / 2;
   } else if (touchRightY === null) {
-    p2.y += Math.sign(ball.y - paddle.h()/2 - p2.y) *
-            paddle.speed() * CPU[difficulty].speed * dt;
+    const cpu = CPU[difficulty];
+    cpuTimer -= dt;
+    if (cpuTimer <= 0) {
+      cpuTimer = cpu.reaction;
+      cpuTargetY = (ball.vx > 0)
+        ? (ball.y - paddle.h()/2 + (Math.random()-0.5) * paddle.h() * cpu.error)
+        : (H/2 - paddle.h()/2);
+    }
+    const diff = cpuTargetY - p2.y;
+    p2.y += Math.sign(diff) * paddle.speed() * cpu.speed * dt;
   }
 
+  // Clamp
   p1.y = Math.max(0, Math.min(H - paddle.h(), p1.y));
   p2.y = Math.max(0, Math.min(H - paddle.h(), p2.y));
 
+  // Move ball
   ball.x += ball.vx * dt;
   ball.y += ball.vy * dt;
 
-  if (ball.y - ball.r() < 0) {
-    ball.y = ball.r();
-    ball.vy = Math.abs(ball.vy);
-    if (ball.wallCooldown <= 0) {
-      beep(300);
-      ball.wallCooldown = 0.08;
-    }
-  }
+  // WALLS: push out + force direction + cooldown (prevents sticking + sound spam)
+  const r = ball.r();
 
-  if (ball.y + ball.r() > H) {
-    ball.y = H - ball.r();
+  if (ball.y - r < 0) {
+    ball.y = r;
+    ball.vy = Math.abs(ball.vy);
+    if (ball.wallCooldown <= 0) { beep(300); ball.wallCooldown = 0.08; }
+  }
+  if (ball.y + r > H) {
+    ball.y = H - r;
     ball.vy = -Math.abs(ball.vy);
-    if (ball.wallCooldown <= 0) {
-      beep(300);
-      ball.wallCooldown = 0.08;
-    }
+    if (ball.wallCooldown <= 0) { beep(300); ball.wallCooldown = 0.08; }
   }
 
   function hit(p, dir) {
     if (
-      ball.x + ball.r() > p.x &&
-      ball.x - ball.r() < p.x + paddle.w &&
-      ball.y + ball.r() > p.y &&
-      ball.y - ball.r() < p.y + paddle.h()
+      ball.x + r > p.x &&
+      ball.x - r < p.x + paddle.w &&
+      ball.y + r > p.y &&
+      ball.y - r < p.y + paddle.h()
     ) {
-      ball.speed = ball.speed * 1.03 + 6;
+      ball.speed = ball.speed * 1.03 + 6; // gradual ramp, no hard cap
       const rel = (ball.y - (p.y + paddle.h()/2)) / (paddle.h()/2);
       const a = Math.max(-Math.PI/4, Math.min(Math.PI/4, rel * Math.PI/4));
       ball.vx = Math.cos(a) * ball.speed * dir;
       ball.vy = Math.sin(a) * ball.speed;
-      beep(600);
+      beep(600 + ball.speed * 0.01);
     }
   }
 
-  hit(p1, 1);
+  hit(p1,  1);
   hit(p2, -1);
 
-  if (ball.x < 0) { scoreR++; score(); }
-  if (ball.x > W) { scoreL++; score(); }
+  // Score
+  if (ball.x < 0) { scoreR++; onScore(); }
+  if (ball.x > W) { scoreL++; onScore(); }
 }
 
-function score() {
+function onScore() {
   if (scoreL >= WIN_SCORE || scoreR >= WIN_SCORE) {
     playing = false;
+
     winnerText.textContent =
       mode === "cpu"
         ? (scoreL ? "PLAYER WINS" : "COMPUTER WINS")
         : (scoreL ? "PLAYER 1 WINS" : "PLAYER 2 WINS");
+
     gameOver.style.display = "flex";
   } else {
     reset();
@@ -325,16 +393,18 @@ function score() {
 function draw() {
   ctx.clearRect(0, 0, W, H);
 
+  // Center dash
   ctx.fillStyle = "#fff";
-  for (let y = 0; y < H; y += 40)
-    ctx.fillRect(W/2 - 2, y, 4, 24);
+  for (let y = 0; y < H; y += 40) ctx.fillRect(W/2 - 2, y, 4, 24);
 
+  // Ball glow
   ctx.shadowColor = "#fff";
   ctx.shadowBlur = Math.min(ball.speed * 0.05, 40);
   const r = ball.r();
   ctx.drawImage(ballImg, ball.x - r, ball.y - r, r*2, r*2);
   ctx.shadowBlur = 0;
 
+  // Paddles (right mirrored inward)
   ctx.drawImage(paddleImg, p1.x, p1.y, paddle.w, paddle.h());
   ctx.save();
   ctx.translate(p2.x + paddle.w, p2.y);
@@ -342,6 +412,7 @@ function draw() {
   ctx.drawImage(paddleImg, 0, 0, paddle.w, paddle.h());
   ctx.restore();
 
+  // Score (never clipped)
   ctx.font = `bold ${Math.min(W, H) * 0.12}px system-ui`;
   ctx.fillStyle = "#fff";
   ctx.textAlign = "center";
@@ -356,10 +427,13 @@ let last = performance.now();
 function loop(t) {
   const dt = Math.min(0.033, (t - last) / 1000);
   last = t;
+
+  // Pauses safely if rotated to portrait during play (no reset)
   if (playing && !orientationBlocked) {
     update(dt);
     draw();
   }
+
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
