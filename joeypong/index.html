@@ -33,6 +33,19 @@ canvas { display: block; }
   z-index: 10;
 }
 
+#rotateNotice {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: black;
+  color: white;
+  z-index: 999;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  text-align: center;
+}
+
 h1 {
   color: white;
   font-size: clamp(48px, 8vw, 96px);
@@ -52,6 +65,8 @@ button {
 </style>
 </head>
 <body>
+
+<div id="rotateNotice">Rotate your device to play</div>
 
 <div class="menu" id="menu">
   <h1>JOEY PONG</h1>
@@ -75,6 +90,7 @@ const ctx = canvas.getContext("2d");
 const menu = document.getElementById("menu");
 const gameOver = document.getElementById("gameOver");
 const winnerText = document.getElementById("winnerText");
+const rotateNotice = document.getElementById("rotateNotice");
 
 const ballImg = new Image();
 ballImg.src = "JoeyPongBall.png";
@@ -86,9 +102,24 @@ let W, H;
 function resize() {
   W = canvas.width = window.innerWidth;
   H = canvas.height = window.innerHeight;
+  checkOrientation();
 }
 window.addEventListener("resize", resize);
+window.addEventListener("orientationchange", resize);
 resize();
+
+/* ================= MOBILE ORIENTATION ================= */
+function checkOrientation() {
+  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+  const isPortrait = window.innerHeight > window.innerWidth;
+
+  if (isMobile && isPortrait) {
+    rotateNotice.style.display = "flex";
+    playing = false;
+  } else {
+    rotateNotice.style.display = "none";
+  }
+}
 
 /* ================= AUDIO ================= */
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -130,7 +161,7 @@ function handleTouch(e) {
   }
 }
 
-/* ================= GAME STATE ================= */
+/* ================= STATE ================= */
 let playing = false;
 let scoreL = 0;
 let scoreR = 0;
@@ -157,12 +188,12 @@ const p2 = {};
 const ball = {
   x: 0,
   y: 0,
+  vx: 0,
+  vy: 0,
   speed: 0,
+  wallCooldown: 0,
   r: () => Math.min(W, H) * 0.07
 };
-
-let cpuTargetY = 0;
-let cpuTimer = 0;
 
 /* ================= FLOW ================= */
 function reset() {
@@ -172,7 +203,7 @@ function reset() {
   ball.x = W / 2;
   ball.y = H / 2;
   ball.speed = Math.min(W, H) * 0.75;
-  cpuTargetY = H / 2;
+  ball.wallCooldown = 0;
 }
 
 function serve() {
@@ -187,12 +218,10 @@ function startCPU(diff) {
   difficulty = diff;
   startGame();
 }
-
 function startPVP() {
   mode = "pvp";
   startGame();
 }
-
 function startGame() {
   menu.style.display = "none";
   gameOver.style.display = "none";
@@ -201,7 +230,6 @@ function startGame() {
   serve();
   playing = true;
 }
-
 function backToMenu() {
   playing = false;
   menu.style.display = "flex";
@@ -209,6 +237,8 @@ function backToMenu() {
 
 /* ================= UPDATE ================= */
 function update(dt) {
+  ball.wallCooldown -= dt;
+
   if (keys["w"]) p1.y -= paddle.speed() * dt;
   if (keys["s"]) p1.y += paddle.speed() * dt;
   if (touchLeftY !== null) p1.y = touchLeftY - paddle.h() / 2;
@@ -219,15 +249,7 @@ function update(dt) {
     if (touchRightY !== null) p2.y = touchRightY - paddle.h() / 2;
   } else if (touchRightY === null) {
     const cpu = CPU[difficulty];
-    cpuTimer -= dt;
-    if (cpuTimer <= 0) {
-      cpuTimer = cpu.reaction;
-      cpuTargetY = ball.vx > 0
-        ? ball.y - paddle.h() / 2 +
-          (Math.random() - 0.5) * paddle.h() * cpu.error
-        : H / 2 - paddle.h() / 2;
-    }
-    p2.y += Math.sign(cpuTargetY - p2.y) *
+    p2.y += Math.sign(ball.y - paddle.h()/2 - p2.y) *
             paddle.speed() * cpu.speed * dt;
   }
 
@@ -237,9 +259,24 @@ function update(dt) {
   ball.x += ball.vx * dt;
   ball.y += ball.vy * dt;
 
-  if (ball.y - ball.r() < 0 || ball.y + ball.r() > H) {
-    ball.vy *= -1;
-    beep(300);
+  // TOP wall
+  if (ball.y - ball.r() < 0) {
+    ball.y = ball.r();
+    ball.vy = Math.abs(ball.vy);
+    if (ball.wallCooldown <= 0) {
+      beep(300);
+      ball.wallCooldown = 0.08;
+    }
+  }
+
+  // BOTTOM wall
+  if (ball.y + ball.r() > H) {
+    ball.y = H - ball.r();
+    ball.vy = -Math.abs(ball.vy);
+    if (ball.wallCooldown <= 0) {
+      beep(300);
+      ball.wallCooldown = 0.08;
+    }
   }
 
   function hit(p, dir) {
@@ -249,14 +286,13 @@ function update(dt) {
       ball.y + ball.r() > p.y &&
       ball.y - ball.r() < p.y + paddle.h()
     ) {
-      ball.speed += 6;
       ball.speed *= 1.03;
-      const rel =
-        (ball.y - (p.y + paddle.h() / 2)) / (paddle.h() / 2);
+      ball.speed += 6;
+      const rel = (ball.y - (p.y + paddle.h()/2)) / (paddle.h()/2);
       const a = Math.max(-Math.PI/4, Math.min(Math.PI/4, rel * Math.PI/4));
       ball.vx = Math.cos(a) * ball.speed * dir;
       ball.vy = Math.sin(a) * ball.speed;
-      beep(600 + ball.speed * 0.02);
+      beep(600);
     }
   }
 
@@ -275,7 +311,6 @@ function score() {
         ? (scoreL ? "PLAYER WINS" : "COMPUTER WINS")
         : (scoreL ? "PLAYER 1 WINS" : "PLAYER 2 WINS");
     gameOver.style.display = "flex";
-    beep(200, 0.3);
   } else {
     reset();
     serve();
