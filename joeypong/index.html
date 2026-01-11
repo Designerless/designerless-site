@@ -39,11 +39,12 @@ canvas { display: block; }
   inset: 0;
   background: black;
   color: white;
-  z-index: 999;
+  z-index: 20;
   align-items: center;
   justify-content: center;
   font-size: 28px;
   text-align: center;
+  pointer-events: none; /* IMPORTANT */
 }
 
 h1 {
@@ -108,17 +109,23 @@ window.addEventListener("resize", resize);
 window.addEventListener("orientationchange", resize);
 resize();
 
-/* ================= MOBILE ORIENTATION ================= */
+/* ================= ORIENTATION ================= */
+let orientationBlocked = false;
+
 function checkOrientation() {
   const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
   const isPortrait = window.innerHeight > window.innerWidth;
 
   if (isMobile && isPortrait) {
     rotateNotice.style.display = "flex";
-    playing = false;
+    orientationBlocked = true;
   } else {
     rotateNotice.style.display = "none";
+    orientationBlocked = false;
   }
+
+  /* force menu reflow (fixes text shifting) */
+  menu.style.display = menu.style.display;
 }
 
 /* ================= AUDIO ================= */
@@ -171,8 +178,8 @@ let difficulty = "easy";
 
 /* ================= CPU ================= */
 const CPU = {
-  easy: { speed: 0.65, reaction: 0.18, error: 0.18 },
-  hard: { speed: 0.9, reaction: 0.07, error: 0.06 }
+  easy: { speed: 0.65 },
+  hard: { speed: 0.9 }
 };
 
 /* ================= OBJECTS ================= */
@@ -186,10 +193,7 @@ const p1 = {};
 const p2 = {};
 
 const ball = {
-  x: 0,
-  y: 0,
-  vx: 0,
-  vy: 0,
+  x: 0, y: 0, vx: 0, vy: 0,
   speed: 0,
   wallCooldown: 0,
   r: () => Math.min(W, H) * 0.07
@@ -218,11 +222,14 @@ function startCPU(diff) {
   difficulty = diff;
   startGame();
 }
+
 function startPVP() {
   mode = "pvp";
   startGame();
 }
+
 function startGame() {
+  if (orientationBlocked) return;
   menu.style.display = "none";
   gameOver.style.display = "none";
   scoreL = scoreR = 0;
@@ -230,6 +237,7 @@ function startGame() {
   serve();
   playing = true;
 }
+
 function backToMenu() {
   playing = false;
   menu.style.display = "flex";
@@ -248,9 +256,8 @@ function update(dt) {
     if (keys["ArrowDown"]) p2.y += paddle.speed() * dt;
     if (touchRightY !== null) p2.y = touchRightY - paddle.h() / 2;
   } else if (touchRightY === null) {
-    const cpu = CPU[difficulty];
     p2.y += Math.sign(ball.y - paddle.h()/2 - p2.y) *
-            paddle.speed() * cpu.speed * dt;
+            paddle.speed() * CPU[difficulty].speed * dt;
   }
 
   p1.y = Math.max(0, Math.min(H - paddle.h(), p1.y));
@@ -259,7 +266,6 @@ function update(dt) {
   ball.x += ball.vx * dt;
   ball.y += ball.vy * dt;
 
-  // TOP wall
   if (ball.y - ball.r() < 0) {
     ball.y = ball.r();
     ball.vy = Math.abs(ball.vy);
@@ -269,7 +275,6 @@ function update(dt) {
     }
   }
 
-  // BOTTOM wall
   if (ball.y + ball.r() > H) {
     ball.y = H - ball.r();
     ball.vy = -Math.abs(ball.vy);
@@ -286,8 +291,7 @@ function update(dt) {
       ball.y + ball.r() > p.y &&
       ball.y - ball.r() < p.y + paddle.h()
     ) {
-      ball.speed *= 1.03;
-      ball.speed += 6;
+      ball.speed = ball.speed * 1.03 + 6;
       const rel = (ball.y - (p.y + paddle.h()/2)) / (paddle.h()/2);
       const a = Math.max(-Math.PI/4, Math.min(Math.PI/4, rel * Math.PI/4));
       ball.vx = Math.cos(a) * ball.speed * dir;
@@ -342,7 +346,6 @@ function draw() {
   ctx.fillStyle = "#fff";
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
-
   const scoreY = Math.max(20, H * 0.04);
   ctx.fillText(scoreL, W * 0.25, scoreY);
   ctx.fillText(scoreR, W * 0.75, scoreY);
@@ -353,7 +356,10 @@ let last = performance.now();
 function loop(t) {
   const dt = Math.min(0.033, (t - last) / 1000);
   last = t;
-  if (playing) update(dt), draw();
+  if (playing && !orientationBlocked) {
+    update(dt);
+    draw();
+  }
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
